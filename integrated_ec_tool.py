@@ -1439,15 +1439,17 @@ class IntegratedECTool(QMainWindow):
 
                     # 埋め込みウィジェットのサイズを取得
                     widget_size = self.master_embed_widget.size()
-                    target_width = widget_size.width()
-                    target_height = widget_size.height()
-                    print(f"埋め込みウィジェットのサイズ: {target_width}x{target_height}")
+                    # ボーダー幅を考慮したサイズ調整（2px border × 2sides = 4px）
+                    border_width = 4
+                    target_width = max(widget_size.width() - border_width, 50)
+                    target_height = max(widget_size.height() - border_width, 50)
+                    print(f"埋め込みウィジェットのサイズ（ボーダー調整後）: {target_width}x{target_height}")
 
                     # ウィンドウを表示域内に移動・リサイズ (0,0 は親ウィジェットの左上からの相対位置)
                     # SWP_FRAMECHANGED を追加してスタイル変更を適用
                     win32gui.SetWindowPos(
                         self.master_hwnd,
-                        0,  # HWND_TOP or specific z-order (0 or win32con.HWND_TOP)
+                        win32con.HWND_TOP,  # Z-orderを明示的に指定
                         0, 0, # x, y (親ウィジェットのクライアント座標系の左上)
                         target_width, target_height,
                         win32con.SWP_SHOWWINDOW | win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE
@@ -1456,8 +1458,9 @@ class IntegratedECTool(QMainWindow):
                     self.embed_timer.stop()
                     print("表示域内配置完了")
                     self.last_resize_size = (target_width, target_height) # 初期サイズを記録
-                    # 初期表示を確実にするために、少し遅れてリサイズを再試行 (遅延を250msに延長)
-                    QTimer.singleShot(250, self.resize_embedded_window)
+                    # OSにウィンドウ状態の変更を処理させる時間を確保
+                    QApplication.processEvents()
+                    self.resize_embedded_window() # タイマーを使わず即時リサイズを試行
                     
                 except Exception as embed_error:
                     self.log_message(f"埋め込み処理エラー: {str(embed_error)}", "ERROR")
@@ -1571,13 +1574,15 @@ class IntegratedECTool(QMainWindow):
             style = style & ~win32con.WS_CAPTION & ~win32con.WS_THICKFRAME
             win32gui.SetWindowLong(self.master_hwnd, win32con.GWL_STYLE, style)
             
-            # ウィンドウサイズを表示域目一杯に調整
+            # ウィンドウサイズを表示域目一杯に調整（ボーダー幅を考慮）
             widget_size = self.master_embed_widget.size()
-            target_width = widget_size.width()
-            target_height = widget_size.height()
+            border_width = 4  # 2px border × 2sides
+            target_width = max(widget_size.width() - border_width, 50)
+            target_height = max(widget_size.height() - border_width, 50)
             
             win32gui.SetWindowPos(
-                self.master_hwnd, 0, 
+                self.master_hwnd, 
+                win32con.HWND_TOP,
                 0, 0,  # 親ウィジェットのクライアント座標 (0,0)
                 target_width, target_height,
                 win32con.SWP_SHOWWINDOW | win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE
@@ -1585,8 +1590,9 @@ class IntegratedECTool(QMainWindow):
             
             # 初期サイズを記録
             self.last_resize_size = (target_width, target_height)
-            # 初期表示を確実にするために、少し遅れてリサイズを再試行 (遅延を250msに延長)
-            QTimer.singleShot(250, self.resize_embedded_window)
+            # OSにウィンドウ状態の変更を処理させる時間を確保
+            QApplication.processEvents()
+            self.resize_embedded_window() # タイマーを使わず即時リサイズを試行
             
             # self.log_message(f"手動埋め込み完了: {window_title}")
             
@@ -1608,7 +1614,7 @@ class IntegratedECTool(QMainWindow):
         # 常にリサイズを実行（前回と同じサイズでも）
         # タイマーをリセットして、リサイズが完了してから実行
         self.resize_timer.stop()
-        self.resize_timer.start(300)  # 300ms後に実行
+        self.resize_timer.start(200)  # 200ms後に実行（統一）
         if hasattr(event, 'accept'):
             event.accept()
     
@@ -1629,11 +1635,18 @@ class IntegratedECTool(QMainWindow):
             if not win32gui.IsWindowVisible(self.master_hwnd):
                 return
             
+            # ボーダー幅を考慮したサイズ調整（2px border × 2sides = 4px）
+            border_width = 4
+            adjusted_width = max(current_size[0] - border_width, 50)  # 最小サイズを保証
+            adjusted_height = max(current_size[1] - border_width, 50)
+            
             win32gui.SetWindowPos(
-                self.master_hwnd, 0, 0, 0, 
-                current_size[0],
-                current_size[1],
-                win32con.SWP_SHOWWINDOW | win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE
+                self.master_hwnd, 
+                win32con.HWND_TOP,
+                0, 0,  # 位置は変更しない（SWP_NOMOVEで無視される）
+                adjusted_width,
+                adjusted_height,
+                win32con.SWP_SHOWWINDOW | win32con.SWP_FRAMECHANGED | win32con.SWP_NOACTIVATE | win32con.SWP_NOMOVE
             )
             
             # 前回のサイズを更新
@@ -1650,7 +1663,7 @@ class IntegratedECTool(QMainWindow):
             print("メインウィンドウリサイズ検出")
             # リサイズが完了してから実行（頻繁な実行を防ぐ）
             self.resize_timer.stop()
-            self.resize_timer.start(200)  # より短い間隔で実行
+            self.resize_timer.start(200)  # 統一された間隔で実行
     
     def manual_resize_master(self):
         """手動リサイズボタンが押された時の処理"""
@@ -1680,7 +1693,7 @@ class IntegratedECTool(QMainWindow):
         # マスタタブ（index 1）に切り替わった場合
         if index == 1 and self.master_hwnd:
             # サイズ調整のみ行う
-            QTimer.singleShot(100, self.resize_embedded_window)  # 少し遅延させて確実に実行
+            QTimer.singleShot(200, self.resize_embedded_window)  # 統一された遅延  # 少し遅延させて確実に実行
             
     def browse_rakuten_image_folder(self):
         """楽天用画像フォルダ選択"""
